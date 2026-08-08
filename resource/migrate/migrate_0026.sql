@@ -4,9 +4,9 @@
 -- priority 越小越靠前，主供应商失败时按 priority 升序依次尝试。
 CREATE TABLE IF NOT EXISTS model_fallback (
     id              INTEGER   NOT NULL PRIMARY KEY AUTOINCREMENT,
-    model_id        INTEGER   NOT NULL REFERENCES model(id),
-    vendor_id       INTEGER   NOT NULL REFERENCES vendor(id),
-    vendor_model_id INTEGER   NULL REFERENCES vendor_model(id),
+    model_id        INTEGER   NOT NULL,
+    vendor_id       INTEGER   NOT NULL,
+    vendor_model_id INTEGER   NULL,
     priority        INTEGER   NOT NULL DEFAULT 0,
     created_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP,
     updated_at      TIMESTAMP NOT NULL DEFAULT CURRENT_TIMESTAMP
