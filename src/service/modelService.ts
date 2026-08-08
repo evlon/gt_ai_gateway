@@ -1,7 +1,16 @@
 import { SgModel } from "../model/sgModel";
+import { SgModelFallback } from "../model/sgModelFallback";
 
 import { SgVendor } from "../model/sgVendor";
+import { SgVendorModel } from "../model/sgVendorModel";
 import customError from "../util/customError";
+
+
+interface FallbackInput {
+    id?: number;
+    vendor_id: number;
+    vendor_model_id?: number | null;
+}
 
 
 async function getModel(modelName: string, enable?: boolean): Promise<SgModel | null> {
@@ -120,8 +129,71 @@ async function deleteModel(modelId: number): Promise<boolean> {
         return false;
     }
 
+    // 删除模型时同时清理其 fallback 配置
+    await SgModelFallback.query().where("model_id", modelId).delete();
     await SgModel.query().where("id", modelId).delete();
     return true;
+}
+
+
+/**
+ * 获取某模型的全部 fallback 配置（按 priority 升序）
+ */
+async function listFallbacks(modelId: number): Promise<SgModelFallback[]> {
+    const fallbacks = await SgModelFallback.query()
+        .where("model_id", modelId)
+        .orderBy("priority", "asc")
+        .get();
+    return fallbacks.toArray<SgModelFallback>();
+}
+
+
+/**
+ * 整体替换某模型的 fallback 配置（先删后建）。
+ * fallbacks 为空数组时清空全部配置。
+ */
+async function saveFallbacks(modelId: number, fallbacks: FallbackInput[]): Promise<SgModelFallback[]> {
+    const model = await SgModel.query().find(modelId);
+    if (!model) {
+        throw new customError.NotFoundError("Model not found");
+    }
+
+    const list = Array.isArray(fallbacks) ? fallbacks : [];
+
+    // 校验每个 fallback 引用的 vendor 与 vendor_model 存在
+    for (const item of list) {
+        const vendor = await SgVendor.query().find(item.vendor_id);
+        if (!vendor) {
+            throw new customError.AppError(`Vendor ${item.vendor_id} not found`, 400);
+        }
+        if (item.vendor_model_id != null) {
+            const vendorModel = await SgVendorModel.query().find(item.vendor_model_id);
+            if (!vendorModel) {
+                throw new customError.AppError(`Vendor model ${item.vendor_model_id} not found`, 400);
+            }
+            if (vendorModel.vendor_id !== item.vendor_id) {
+                throw new customError.AppError(
+                    `Vendor model ${item.vendor_model_id} does not belong to vendor ${item.vendor_id}`,
+                    400,
+                );
+            }
+        }
+    }
+
+    // 事务式整体替换：先删旧配置，再按 priority 顺序写入新配置
+    await SgModelFallback.query().where("model_id", modelId).delete();
+
+    for (let i = 0; i < list.length; i++) {
+        const item = list[i];
+        await SgModelFallback.query().create({
+            model_id: modelId,
+            vendor_id: item.vendor_id,
+            vendor_model_id: item.vendor_model_id ?? null,
+            priority: i,
+        });
+    }
+
+    return await listFallbacks(modelId);
 }
 
 export default {
@@ -129,4 +201,6 @@ export default {
     listEnabledModels,
     updateModel,
     deleteModel,
+    listFallbacks,
+    saveFallbacks,
 };

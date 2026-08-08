@@ -1,6 +1,6 @@
 import request from '../utils/request';
 import type { ListResult } from '../types';
-import type { Model, CreateModelRequest, UpdateModelRequest } from '../types/model';
+import type { Model, CreateModelRequest, UpdateModelRequest, ModelFallback, ModelFallbackInput } from '../types/model';
 import type { ModelQuery } from '../types/model';
 
 export async function listModels(params?: ModelQuery): Promise<ListResult<Model>> {
@@ -25,4 +25,12 @@ export async function updateModel(id: number, data: UpdateModelRequest): Promise
 
 export async function deleteModel(id: number): Promise<{ success: boolean }> {
     return request.delete(`/model/${id}`);
+}
+
+export async function listModelFallbacks(modelId: number): Promise<ModelFallback[]> {
+    return request.get(`/model/${modelId}/fallback/list.json`);
+}
+
+export async function saveModelFallbacks(modelId: number, fallbacks: ModelFallbackInput[]): Promise<ModelFallback[]> {
+    return request.post(`/model/${modelId}/fallback/save.json`, { fallbacks });
 }

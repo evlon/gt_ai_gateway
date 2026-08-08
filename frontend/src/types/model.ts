@@ -1,5 +1,18 @@
 import type { BaseEntity, TableQuery } from './index';
 
+export interface ModelFallback extends BaseEntity {
+    model_id: number;
+    vendor_id: number;
+    vendor_model_id: number | null;
+    priority: number;
+}
+
+export interface ModelFallbackInput {
+    id?: number;
+    vendor_id: number;
+    vendor_model_id?: number | null;
+}
+
 export interface Model extends BaseEntity {
     name: string;
     vendor_id: number;
@@ -22,6 +35,7 @@ export interface CreateModelRequest {
         cache_read?: number;
     } | null;
     vendor_model_id?: number | null;
+    fallbacks?: ModelFallbackInput[];
 }
 
 export interface UpdateModelRequest {
@@ -34,6 +48,7 @@ export interface UpdateModelRequest {
         cache_read?: number;
     } | null;
     vendor_model_id?: number | null;
+    fallbacks?: ModelFallbackInput[];
 }
 
 export interface ModelQuery extends TableQuery {

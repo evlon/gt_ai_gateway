@@ -172,6 +172,7 @@ class ORMService {
         "client_config",
         "config",
         "model",
+        "model_fallback",
         "recharge_records",
         "record",
         "user",

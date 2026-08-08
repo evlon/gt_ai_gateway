@@ -23,9 +23,9 @@ async function checkDuplicateEnabledModel(
 
 async function createModel(c: Context) {
     const body = await c.req.json();
-    const { name, vendor_id, enable = true, prices = {}, vendor_model_id = null } = body;
+    const { name, vendor_id, enable = true, prices = {}, vendor_model_id = null, fallbacks = [] } = body;
 
-    console.log("[modelController] Creating model:", { name, vendor_id, enable, prices, vendor_model_id });
+    console.log("[modelController] Creating model:", { name, vendor_id, enable, prices, vendor_model_id, fallbacks });
 
     // Validate required fields
     if (!name || !vendor_id) {
@@ -53,6 +53,11 @@ async function createModel(c: Context) {
         prices,
         vendor_model_id,
     });
+
+    // 保存 fallback 配置
+    if (Array.isArray(fallbacks) && fallbacks.length > 0) {
+        await modelService.saveFallbacks(instance.id, fallbacks);
+    }
 
     console.log("[modelController] Model created successfully:", instance);
     return c.json(instance);
@@ -133,7 +138,7 @@ async function updateModel(c: Context) {
         throw new customError.AppError("Invalid ID format");
     }
 
-    const { name, vendor_id, enable, prices, vendor_model_id } = await c.req.json();
+    const { name, vendor_id, enable, prices, vendor_model_id, fallbacks } = await c.req.json();
 
     console.log("[modelController] Updating model:", {
         modelId,
@@ -142,6 +147,7 @@ async function updateModel(c: Context) {
         enable,
         prices,
         vendor_model_id,
+        fallbacks,
     });
 
     const updatedModel = await modelService.updateModel(modelId, {
@@ -154,6 +160,11 @@ async function updateModel(c: Context) {
 
     if (!updatedModel) {
         throw new customError.NotFoundError("Model not found");
+    }
+
+    // 整体替换 fallback 配置（传入数组时更新）
+    if (Array.isArray(fallbacks)) {
+        await modelService.saveFallbacks(modelId, fallbacks);
     }
 
     console.log("[modelController] Model updated successfully:", updatedModel);
@@ -178,6 +189,33 @@ async function deleteModel(c: Context) {
     return c.json({ success: true });
 }
 
+
+async function listModelFallbacks(c: Context) {
+    const id = c.req.param("id");
+    const modelId = parseInt(id, 10);
+
+    if (isNaN(modelId)) {
+        throw new customError.AppError("Invalid ID format");
+    }
+
+    const fallbacks = await modelService.listFallbacks(modelId);
+    return c.json(fallbacks);
+}
+
+
+async function saveModelFallbacks(c: Context) {
+    const id = c.req.param("id");
+    const modelId = parseInt(id, 10);
+
+    if (isNaN(modelId)) {
+        throw new customError.AppError("Invalid ID format");
+    }
+
+    const body = await c.req.json();
+    const fallbacks = await modelService.saveFallbacks(modelId, body.fallbacks ?? []);
+    return c.json(fallbacks);
+}
+
 export default {
     createModel,
     listModels,
@@ -186,4 +224,6 @@ export default {
     getModelsByIds,
     updateModel,
     deleteModel,
+    listModelFallbacks,
+    saveModelFallbacks,
 };

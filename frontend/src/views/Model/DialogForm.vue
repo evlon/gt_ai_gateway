@@ -56,6 +56,85 @@
                     </a-select-option>
                 </a-select>
             </a-form-item>
+
+            <div class="fallback-section">
+                <div class="fallback-header">
+                    <span class="fallback-title">Fallback 供应商模型</span>
+                    <a-tooltip title="主供应商请求失败（网络异常 / 5xx / 429）时，将按顺序切换到以下备选供应商重试。留空则不启用回退。">
+                        <InfoCircleOutlined style="font-size: 12px; color: #999; margin-left: 4px;" />
+                    </a-tooltip>
+                </div>
+                <a-empty
+                    v-if="formState.fallbacks.length === 0"
+                    :image="simpleImage"
+                    description="暂无备选，点击下方按钮添加"
+                    style="padding: 8px 0;"
+                />
+                <div
+                    v-for="(item, index) in formState.fallbacks"
+                    :key="index"
+                    class="fallback-row"
+                >
+                    <div class="fallback-row-index">{{ index + 1 }}</div>
+                    <a-select
+                        v-model:value="item.vendor_id"
+                        class="fallback-row-vendor"
+                        placeholder="备选供应商"
+                        :loading="isFallbackVendorLoading(item.vendor_id)"
+                        @change="handleFallbackVendorChange(index)"
+                    >
+                        <a-select-option
+                            v-for="vendor in vendors"
+                            :key="vendor.id"
+                            :value="vendor.id"
+                        >
+                            {{ vendor.name }}
+                        </a-select-option>
+                    </a-select>
+                    <a-select
+                        v-model:value="item.vendor_model_id"
+                        class="fallback-row-model"
+                        placeholder="自动（使用模型名称）"
+                        allow-clear
+                        :loading="isFallbackVendorLoading(item.vendor_id)"
+                        :disabled="!item.vendor_id"
+                    >
+                        <a-select-option
+                            v-for="vm in getFallbackVendorModels(item.vendor_id)"
+                            :key="vm.id"
+                            :value="vm.id"
+                        >
+                            {{ vm.model_id }}
+                        </a-select-option>
+                    </a-select>
+                    <div class="fallback-row-actions">
+                        <a-button
+                            size="small"
+                            type="text"
+                            :disabled="index === 0"
+                            @click="moveFallbackUp(index)"
+                        >
+                            <ArrowUpOutlined />
+                        </a-button>
+                        <a-button
+                            size="small"
+                            type="text"
+                            :disabled="index === formState.fallbacks.length - 1"
+                            @click="moveFallbackDown(index)"
+                        >
+                            <ArrowDownOutlined />
+                        </a-button>
+                        <a-button size="small" type="text" danger @click="removeFallback(index)">
+                            <DeleteOutlined />
+                        </a-button>
+                    </div>
+                </div>
+                <a-button type="dashed" block class="fallback-add" @click="addFallback">
+                    <PlusOutlined />
+                    添加 Fallback
+                </a-button>
+            </div>
+
             <a-form-item label="状态" name="enable">
                 <a-switch v-model:checked="formState.enable" />
             </a-form-item>
@@ -121,16 +200,19 @@
 <script setup lang="ts">
 import { ref, reactive, computed } from 'vue';
 import type { FormInstance } from 'ant-design-vue/es';
-import { InfoCircleOutlined } from '@ant-design/icons-vue';
-import { createModel, updateModel } from '@/api/model';
+import { InfoCircleOutlined, PlusOutlined, DeleteOutlined, ArrowUpOutlined, ArrowDownOutlined } from '@ant-design/icons-vue';
+import { createModel, updateModel, listModelFallbacks } from '@/api/model';
 import { listVendors, listVendorModels } from '@/api/vendor';
 import { getConfig } from '@/api/config';
 import SettingsCollapse from '@/components/common/SettingsCollapse.vue';
-import type { Model } from '@/types/model';
+import type { Model, ModelFallbackInput } from '@/types/model';
 import type { Vendor as VendorType, VendorModel } from '@/types/vendor';
 import { normalizeListResponse } from '@/utils/listResponse';
 import { notifyError, notifyRequestError, notifySuccess } from '@/utils/requestFeedback';
 import DialogTest from '@/views/Vendor/DialogTest.vue';
+import { Empty } from 'ant-design-vue';
+
+const simpleImage = Empty.PRESENTED_IMAGE_SIMPLE;
 
 const emit = defineEmits<{
     success: [model: Model];
@@ -150,6 +232,7 @@ const formState = reactive({
     vendor_id: undefined as number | undefined,
     vendor_model_id: undefined as number | undefined,
     enable: true,
+    fallbacks: [] as ModelFallbackInput[],
     prices: {
         input: undefined as number | undefined,
         output: undefined as number | undefined,
@@ -167,6 +250,10 @@ const vendorsLoading = ref(false);
 const moduleBillingEnabled = ref(false);
 const vendorModels = ref<VendorModel[]>([]);
 const vendorModelsLoading = ref(false);
+
+// fallback 行的供应商模型缓存：vendorId -> VendorModel[]，以及加载中状态
+const fallbackVendorModelsMap = reactive<Record<number, VendorModel[]>>({});
+const fallbackVendorLoading = reactive<Record<number, boolean>>({});
 
 const upstreamModelName = computed(() => {
     if (formState.vendor_model_id) {
@@ -205,6 +292,68 @@ function handleVendorChange(vendorId: number) {
     }
 }
 
+// ---- Fallback 相关逻辑 ----
+
+function getFallbackVendorModels(vendorId: number | undefined): VendorModel[] {
+    if (!vendorId) return [];
+    if (!fallbackVendorModelsMap[vendorId]) {
+        void loadFallbackVendorModels(vendorId);
+    }
+    return fallbackVendorModelsMap[vendorId] ?? [];
+}
+
+function isFallbackVendorLoading(vendorId: number | undefined): boolean {
+    return !!vendorId && !!fallbackVendorLoading[vendorId];
+}
+
+async function loadFallbackVendorModels(vendorId: number) {
+    fallbackVendorLoading[vendorId] = true;
+    try {
+        fallbackVendorModelsMap[vendorId] = await listVendorModels(vendorId);
+    } catch (error) {
+        fallbackVendorModelsMap[vendorId] = [];
+    } finally {
+        fallbackVendorLoading[vendorId] = false;
+    }
+}
+
+function handleFallbackVendorChange(index: number) {
+    const item = formState.fallbacks[index];
+    if (item) {
+        item.vendor_model_id = undefined;
+        if (item.vendor_id) {
+            void loadFallbackVendorModels(item.vendor_id);
+        }
+    }
+}
+
+function addFallback() {
+    formState.fallbacks.push({
+        vendor_id: undefined as any,
+        vendor_model_id: undefined,
+    });
+}
+
+function removeFallback(index: number) {
+    formState.fallbacks.splice(index, 1);
+}
+
+function moveFallbackUp(index: number) {
+    if (index <= 0) return;
+    const arr = formState.fallbacks;
+    const removed = arr.splice(index, 1);
+    if (removed.length === 0) return;
+    arr.splice(index - 1, 0, removed[0]!);
+}
+
+function moveFallbackDown(index: number) {
+    const arr = formState.fallbacks;
+    if (index >= arr.length - 1) return;
+    const removed = arr.splice(index, 1);
+    if (removed.length === 0) return;
+    arr.splice(index + 1, 0, removed[0]!);
+}
+
 function handleTest() {
     const vendor = vendors.value.find(v => v.id === formState.vendor_id);
     if (!vendor) return;
@@ -221,6 +370,7 @@ function openCreate() {
     isEdit.value = false;
     currentId.value = 0;
     billingExpanded.value = [];
+    formState.fallbacks = [];
     void loadVendors();
     getConfig().then(config => {
         moduleBillingEnabled.value = config.module_billing_enabled === 'true';
@@ -228,7 +378,7 @@ function openCreate() {
     visible.value = true;
 }
 
-function openEdit(model: Model) {
+async function openEdit(model: Model) {
     isEdit.value = true;
     currentId.value = model.id;
     billingExpanded.value = [];
@@ -236,6 +386,7 @@ function openEdit(model: Model) {
     formState.vendor_id = model.vendor_id;
     formState.vendor_model_id = model.vendor_model_id ?? undefined;
     formState.enable = Boolean(model.enable);
+    formState.fallbacks = [];
     formState.prices = {
         input: model.prices?.input || undefined,
         output: model.prices?.output || undefined,
@@ -245,10 +396,35 @@ function openEdit(model: Model) {
     if (model.vendor_id) {
         void loadVendorModels(model.vendor_id);
     }
+    // 加载已有 fallback 配置
+    try {
+        const fallbacks = await listModelFallbacks(model.id);
+        formState.fallbacks = (fallbacks || []).map(fb => ({
+            vendor_id: fb.vendor_id,
+            vendor_model_id: fb.vendor_model_id ?? undefined,
+        }));
+        // 预加载 fallback 供应商的模型列表
+        for (const fb of formState.fallbacks) {
+            if (fb.vendor_id) {
+                void loadFallbackVendorModels(fb.vendor_id);
+            }
+        }
+    } catch (error) {
+        console.error('加载 fallback 配置失败:', error);
+    }
     getConfig().then(config => {
         moduleBillingEnabled.value = config.module_billing_enabled === 'true';
     });
     visible.value = true;
+}
+
+function buildFallbackPayload(): ModelFallbackInput[] {
+    return formState.fallbacks
+        .filter(item => !!item.vendor_id)
+        .map(item => ({
+            vendor_id: item.vendor_id,
+            vendor_model_id: item.vendor_model_id ?? null,
+        }));
 }
 
 async function handleOk() {
@@ -260,6 +436,7 @@ async function handleOk() {
             const model = await updateModel(currentId.value, {
                 ...formState,
                 vendor_model_id: formState.vendor_model_id ?? null,
+                fallbacks: buildFallbackPayload(),
             });
             notifySuccess('更新成功');
             emit('success', model);
@@ -273,6 +450,7 @@ async function handleOk() {
                 vendor_id: formState.vendor_id,
                 enable: formState.enable,
                 vendor_model_id: formState.vendor_model_id ?? null,
+                fallbacks: buildFallbackPayload(),
                 prices: {
                     input: formState.prices.input ?? undefined,
                     output: formState.prices.output ?? undefined,
@@ -298,6 +476,7 @@ function handleCancel() {
     formState.vendor_id = undefined;
     formState.vendor_model_id = undefined;
     formState.enable = true;
+    formState.fallbacks = [];
     formState.prices = {
         input: undefined,
         output: undefined,
@@ -320,5 +499,61 @@ defineExpose({ openCreate, openEdit });
 .modal-footer > div {
     display: flex;
     gap: 8px;
+}
+
+.fallback-section {
+    margin-bottom: 20px;
+    padding: 12px;
+    background: #fafafa;
+    border: 1px solid #f0f0f0;
+    border-radius: 8px;
+}
+
+.fallback-header {
+    display: flex;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 14px;
+    font-weight: 500;
+    color: #333;
+}
+
+.fallback-row {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    margin-bottom: 8px;
+}
+
+.fallback-row-index {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    border-radius: 50%;
+    background: #1677ff;
+    color: #fff;
+    font-size: 12px;
+    font-weight: 600;
+}
+
+.fallback-row-vendor {
+    flex: 1;
+}
+
+.fallback-row-model {
+    flex: 1;
+}
+
+.fallback-row-actions {
+    display: flex;
+    gap: 2px;
+    flex-shrink: 0;
+}
+
+.fallback-add {
+    margin-top: 4px;
 }
 </style>

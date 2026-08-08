@@ -40,17 +40,41 @@
                 </a-descriptions-item>
             </a-descriptions>
         </a-card>
+
+        <a-card title="Fallback 供应商模型" :loading="loading" style="margin-top: 16px;">
+            <a-empty v-if="fallbacks.length === 0" description="未配置 fallback 备选" />
+            <a-table
+                v-else
+                :data-source="fallbacks"
+                :columns="fallbackColumns"
+                :pagination="false"
+                size="middle"
+                row-key="id"
+            >
+                <template #bodyCell="{ column, record }">
+                    <template v-if="column.key === 'index'">
+                        {{ fallbackOrder(record) }}
+                    </template>
+                    <template v-else-if="column.key === 'vendor'">
+                        {{ vendorName(record.vendor_id) }}
+                    </template>
+                    <template v-else-if="column.key === 'model'">
+                        {{ vendorModelName(record.vendor_model_id) }}
+                    </template>
+                </template>
+            </a-table>
+        </a-card>
     </div>
 </template>
 
 <script setup lang="ts">
 import { ref, onMounted } from 'vue';
 import { useRoute, useRouter } from 'vue-router';
-import { getModel } from '@/api/model';
-import { fetchVendorModelsByIds } from '@/api/vendor';
+import { getModel, listModelFallbacks } from '@/api/model';
+import { fetchVendorModelsByIds, fetchVendorsByIds } from '@/api/vendor';
 import { formatDate } from '@/utils/format';
-import type { Model } from '@/types/model';
-import type { VendorModel } from '@/types/vendor';
+import type { Model, ModelFallback } from '@/types/model';
+import type { VendorModel, Vendor as VendorType } from '@/types/vendor';
 
 const route = useRoute();
 const router = useRouter();
@@ -58,6 +82,15 @@ const router = useRouter();
 const loading = ref(false);
 const model = ref<Model | null>(null);
 const vendorModel = ref<VendorModel | null>(null);
+const fallbacks = ref<ModelFallback[]>([]);
+const vendorsMap = ref<Record<number, VendorType>>({});
+const vendorModelsMap = ref<Record<number, VendorModel>>({});
+
+const fallbackColumns = [
+    { title: '优先级', key: 'index', width: 80 },
+    { title: '备选供应商', key: 'vendor' },
+    { title: '备选上游模型', key: 'model' },
+];
 
 onMounted(async () => {
     const id = Number(route.params.id);
@@ -65,6 +98,19 @@ onMounted(async () => {
         await loadModel(id);
     }
 });
+
+function fallbackOrder(record: ModelFallback): number {
+    return fallbacks.value.findIndex(fb => fb.id === record.id) + 1;
+}
+
+function vendorName(vendorId: number): string {
+    return vendorsMap.value[vendorId]?.name ?? `#${vendorId}`;
+}
+
+function vendorModelName(vendorModelId: number | null): string {
+    if (vendorModelId == null) return '自动（使用模型名称）';
+    return vendorModelsMap.value[vendorModelId]?.model_id ?? `#${vendorModelId}`;
+}
 
 async function loadModel(id: number) {
     loading.value = true;
@@ -75,6 +121,28 @@ async function loadModel(id: number) {
             const vms = await fetchVendorModelsByIds([m.vendor_model_id]);
             if (vms && vms.length > 0) {
                 vendorModel.value = vms[0] ?? null;
+            }
+        }
+
+        // 加载 fallback 配置及其供应商/上游模型信息
+        const fbs = await listModelFallbacks(id);
+        fallbacks.value = fbs || [];
+
+        const vendorIds = [...new Set(fallbacks.value.map(fb => fb.vendor_id))];
+        const vendorModelIds = [...new Set(
+            fallbacks.value.map(fb => fb.vendor_model_id).filter((x): x is number => x != null),
+        )];
+
+        if (vendorIds.length > 0) {
+            const vs = await fetchVendorsByIds(vendorIds);
+            for (const v of vs) {
+                vendorsMap.value[v.id] = v;
+            }
+        }
+        if (vendorModelIds.length > 0) {
+            const vms = await fetchVendorModelsByIds(vendorModelIds);
+            for (const vm of vms) {
+                vendorModelsMap.value[vm.id] = vm;
             }
         }
     } catch (error) {

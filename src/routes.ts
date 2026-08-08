@@ -37,6 +37,7 @@ type Variables = {
     user?: SgUser;
     modelConfig?: SgModel;
     vendor?: SgVendor;
+    candidates?: { vendor: SgVendor; vendorModel: any }[];
     requestBody?: string;
 };
 
@@ -142,6 +143,8 @@ app.post("/model/batch.json", authMiddleware.requireAdmin, modelController.getMo
 app.get("/model/:id", authMiddleware.requireAdmin, modelController.getModel);
 app.put("/model/:id", authMiddleware.requireAdmin, modelController.updateModel);
 app.delete("/model/:id", authMiddleware.requireAdmin, modelController.deleteModel);
+app.get("/model/:id/fallback/list.json", authMiddleware.requireAdmin, modelController.listModelFallbacks);
+app.post("/model/:id/fallback/save.json", authMiddleware.requireAdmin, modelController.saveModelFallbacks);
 
 // User (需要管理员权限)
 app.get("/user/list.json", authMiddleware.requireAdmin, userController.listUsers);
